@@ -1,0 +1,644 @@
+---
+title: "Loan data modeling"
+author: "Yunosheva Viktoria"
+date: "20 11 2021"
+output: html_document
+---
+
+```{r setup,include=FALSE,include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+library(tidytext)
+library(rsample)
+library(caret)
+```
+
+
+[Links for the dataset:](https://www.kaggle.com/itssuru/loan-data?select=loan_data.csv)
+
+Meta-data:
+
+Here we have 16 variables:
+
+Here are what the columns represent:
+Data Dictionary
+Variable	class	description
+
+credit_policy	numeric	1 if the customer meets the credit underwriting criteria; 0 otherwise.
+
+purpose	character	The purpose of the loan.
+
+int_rate	numeric	The interest rate of the loan (more risky borrowers are assigned higher interest rates).
+
+installment	numeric	The monthly installments owed by the borrower if the loan is funded.
+
+log_annual_inc	numeric	The natural log of the self-reported annual income of the borrower.
+
+dti	numeric	The debt-to-income ratio of the borrower (amount of debt divided by annual income).
+
+fico	numeric	The FICO credit score of the borrower.
+
+days_with_cr_line	numeric	The number of days the borrower has had a credit line.
+
+revol_bal	numeric	The borrower's revolving balance (amount unpaid at the end of the credit card billing cycle).
+
+revol_util	numeric	The borrower's revolving line utilization rate (the amount of the credit line used relative to total credit available).
+
+inq_last_6mths	numeric	The borrower's number of inquiries by creditors in the last 6 months.
+
+delinq_2yrs	numeric	The number of times the borrower had been 30+ days past due on a payment in the past 2 years.
+
+pub_rec	numeric	The borrower's number of derogatory public records.
+
+not_fully_paid	numeric	1 if the loan is not fully paid; 0 otherwise.
+
+## The data visualization
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(readr)
+loan_data <- read_csv("loan_data.csv")
+head(loan_data)
+```
+
+Let's look on the data using the purposes of the credit:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+loan=ggplot(loan_data)+geom_bar(aes(x=purpose,fill=purpose))+coord_flip()+ labs(title = "Loan purpose",
+       x = "",
+       y = "") + scale_x_discrete()
+ggplotly(loan)
+```
+
+The majoruty of our clients take loans for debt consumption.But bay be that is because different interest rates? Check it.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+loans=loan_data %>%
+  group_by(purpose) %>%
+  summarise(freq = n(),
+            average = mean(int.rate, na.rm = TRUE)) %>%
+  arrange(desc(average)) 
+
+ggplot(data=loans,aes(x = reorder(purpose, desc(average)), y = average, fill = purpose)) +
+  geom_col(colour = "black")+ coord_flip() +
+  theme(legend.position = "none") +
+  ggtitle("Average interest rate by loan purpose") +
+  labs(x = " ",
+       y = " ")
+```
+
+Interest rate for debt consumption is not the biggest one? but the second only.But now let's check how interest rate could influence on the fully paid loans:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+#loan_data=loan_data%>% mutate(mean_int_rate=)
+loan=full_join(loan_data,loans)
+loan %>% plot_ly(x = ~ purpose,y=~average,color= ~as.factor(not.fully.paid),
+          text = ~paste("Average_int_rate:", round(average,3), '<br>Paid:', not.fully.paid ), type = 'bar', hoverinfo = 'text') %>% 
+  layout(title = "Paid fully loan and not paid by purpose and interest rate",
+         xaxis = list(title = "Purpose	character"),
+         yaxis = list(title = "Mean interest rate for a loan"))
+```
+
+As we could see the majority of our client who had the high interest rate did not left the loan and such tendency is observed everywhere.The borrowers who fully paid the credit had very low interest rate.
+But it cold be other reasons why borrowers did not paid fully.Sometime it's their rating credit score.
+Observing the annual income of borrowers by loan purpose and his fico.(credit score of the borrower).
+
+We can see that FICO for educational and debt purposes has the lowest median and minimum  data that allowsborrowers with low credit score take the credit and this reason could lead the bank to the risk.
+
+```{r echo=FALSE, warning=FALSE}
+box_plot<-ggplot(loan_data, aes(purpose, fico, fill = purpose)) +
+  geom_boxplot() +
+   coord_flip() +
+  theme(legend.position = "none") +
+  ggtitle("FICO by loan purpose") +
+  labs(x = "",
+       y = "") + scale_x_discrete()
+ggplotly(box_plot)
+```
+
+Let's look weather good FICO realy helps people take credit easieк?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+credit_score=ggplot(loan_data, aes(fico, int.rate, color = as.factor(credit.policy))) +
+  geom_point() +
+  
+        
+  labs(title = "Credit scores and interest rates by credit policy",
+       x = "FICO", y = "Interest rates") +
+  scale_color_discrete(name = "Meet credit policy:",
+                       labels = c("No",
+                                  "Yes"))+
+  geom_smooth(method = "lm", se = FALSE)
+ggplotly(credit_score)
+```
+
+We used linear regression trend to who exactly the dependence of three main data: interest rate,fico and 
+paid loan data.The higher fico- the lower interest rate will be and the more chances to pay loan fully.
+
+We also want to check the dti-(amount of debt divided by annual income) by purpose.The lower this date - more chances that the borrower will return the loan fully.However for everyone both for those who paid fully and not - this ratio is not over the 30%, only debt consolidation purpose in those who paid all is achieving this ratio. 
+
+```{r echo=FALSE}
+loan_data=na.omit(loan_data)
+ggplot(loan_data, aes(factor(purpose), dti,fill=purpose))+geom_violin(adjust = .5)+coord_flip()+ggtitle("Debt to income ratio of a loan by purposes") +
+  labs(y = "Ratio",
+       x = "Purpose")+facet_grid(~not.fully.paid)
+```
+
+Our purpose is to create mechanism that will allow us to predict whether borrower pays the full credit or not.This information is quite required both for banks and investors who wants to recoup the sum of money that they lend with profit for different types of borrowers.The data analyses has shown us that the better FICO  the lower the interest rate in the bank for such borrowers.However good FICO doesn't mean that the borrower will return the credit fully.
+
+The main group of our borrowers consists of debt_consolidation borrowers, the second position is 'all other' and the last one by number  of clients is educational group.
+
+The main parameters were analyzed above:among them are purposes, interest rate, ratio of the debt over the income of the borrower,fico as a score data and statistics of fully-paid credit by borrower.
+
+As I mentioned, our purpose  is to predict weather a potential client returns full credit score by the available data using financial marketing models for prediction.
+
+We will use binary regression models, methods of statistics analyses such as analysis of variance including multiple comparison k-mean and K-nearest neighbors method as well as client clastarization and machine learning prediction for our aim.
+
+## Correlation and statistical analyses
+
+To control multicollinearity we use correlation matrix and check the data: the last column is a variable that we are going to predict in attempt to create the model.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(PerformanceAnalytics)
+loan_data=na.omit(loan_data)
+loan_data$purpose=as.factor(loan_data$purpose)
+loan_data$purpose=as.numeric(loan_data$purpose)
+loan_data=loan_data %>% mutate_if(is.double,as.numeric)
+cordata<-cor(loan_data)
+library(psych)
+chart.Correlation(cordata, histogram = TRUE, method = "pearson")
+corPlot(cordata, cex = 1.2)
+```
+
+Test for checking multicollinearity:
+
+```{r echo=FALSE}
+library(tidyverse)
+data1 <- loan_data  
+set.seed(889900) 
+split = initial_split(data1, prop = 0.8)
+train = training(split)
+test= testing(split)
+# Build the model
+
+model1 <- lm(not.fully.paid ~., data = train)
+# Make predictions
+predictions <- model1 %>% predict(test)
+# Model performance
+data.frame(
+  RMSE = caret::RMSE(predictions, test$not.fully.paid),
+  R2 = caret::R2(predictions, test$not.fully.paid)
+)
+#multicollinearity
+car::vif(model1)
+```
+No multicollinearity cause less then 5 in each.
+
+Check  FICO : Conduct the proper test to determine if there is a difference in payments and credit rating (fico).
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Perform a t-test
+ttest <- t.test(fico~not.fully.paid, data = loan_data)
+
+library(broom)
+
+
+tidy(ttest)
+```
+So we can reject the null hypothesis that fico=0 .
+
+Chec purpose:
+How does loan purpose affect the amount funded?
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Build a linear regression model, purpose_recode_model
+purpose_recode_model <- lm(installment ~ purpose , data = loan_data)
+
+# Examine results of purpose_recode_model
+summary(purpose_recode_model)
+
+# Get anova results and save as purpose_recode_anova
+purpose_recode_anova <- anova(purpose_recode_model)
+
+# Print purpose_recode_anova
+purpose_recode_anova
+
+# Examine class of purpose_recode_anova
+class(purpose_recode_anova)
+```
+Based on the very small p-value, purpose_recode_anova's results indicate that there is evidence to support the hypothesis that the mean loan amounts are different for at least one combination of purpose's levels.
+
+Before we examine other factors besides purpose_recode that might influence the amount of loan funded, let's examine which means of purpose_recode are different. This is the post-hoc test referred to in the last exercise.
+
+The result of that ANOVA test was statistically significant with a very low p-value. This means we can reject the null hypothesis and accept the alternative hypothesis that at least one mean was different. But which one?
+
+We should use Tukey's HSD test, which stands for Honest Significant Difference. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+purpose_aov <- aov(installment ~ purpose , data = loan)
+
+# Conduct Tukey's HSD test to create tukey_output
+
+tukey_output <-  TukeyHSD(purpose_aov, "purpose", conf.level = 0.95)
+
+tidy(tukey_output)
+```
+
+Looking at the p-values for each comparison of the levels of purpose, we can see that only a few of the mean differences are statistically significant, for example the differences in the means for the home_improvement and debt_consolidation loan amounts. In this case, these tiny p-values are most likely to be due to large sample size, and further tests would be required to determine what's actually significant in the case of loans (known as the practical significance.)
+
+Another assumption of ANOVA and linear modeling is homogeneity of variance. Let's check wheather the variance is the same for each level of loan purpose in interest rate.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+rate_aov <- aov(int.rate ~ purpose, data = loan_data)
+summary(rate_aov)
+```
+Yes,it is but how exactly?We will use Barrett's test for homogeneity of variance.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+par(mfrow = c(2, 2))
+
+# Plot grade_aov
+plot(rate_aov)
+
+# Bartlett's test for homogeneity of variance
+bartlett.test(int.rate ~ purpose, data = loan_data)
+```
+The Q-Q plot  shows that the residuals are fairly normal. However, given the highly significant p-value from Bartlett's test, the assumption of homogeneity of variances is violated, which is one of the assumptions of an ANOVA model. Therefore, ANOVA might not be the best choice for this experiment. 
+
+One non-parametric alternative to ANOVA is the Kruskal-Wallis rank sum test. For those with some statistics knowledge, it is an extension of the Mann-Whitney U test for when there are more than two groups, like with our loan-purpose variable. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+kruskal.test(int.rate ~ purpose,
+             data = loan_data)
+```
+The low p-value indicates that based on this test, we can be confident in our result, which we found across this experiment, that int.rate varies by purpose.
+
+Next, build models to predict customers whose not paid fully their loans using binary regression:
+
+## Regression modeling
+
+So as we try to predict a binomial parameter we can use two paths to predict it: logistic regression or probability regression.(Logit and probit models).
+
+A bit of theory:
+What is logit-probit regression?
+![Caption for the picture.](https://images.slideplayer.com/73/13858937/slides/slide_29.jpg) 
+Probit and logit models are nonlinear regression models specifically designed for binary dependent variables.
+Since regressions with a binary dependent variable Y model the probability that Y = 1, it makes sense to use a nonlinear formulation is pronounced as probit and logit.Regressions with binary dependent variables is a model that leads to the fact that the predicted values lie in the range from 0 to 1. Since the integral probability distribution functions (c.d.f) give probability values located between 0 and 1 , they are also used in logit and probit regression models. The probit model uses the standard normal probability distribution function. In the logit model, which is also called logistic regression, the logistic distribution function is used.
+
+![](http://blog.hackerearth.com/wp-content/uploads/2017/01/equateimage-e1483685096494.png)
+
+Let's visualise our data and sy something about the minuses:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data1 <- loan_data  
+set.seed(889900) 
+split = initial_split(data1, prop = 0.8)
+train = training(split)
+test= testing(split)
+data1 %>% 
+  ggplot(aes(x = fico, y = not.fully.paid)) + 
+  geom_jitter(width = 0, height = 0.05, alpha = 0.5) + 
+  geom_smooth(method = "glm", se = FALSE) + 
+  geom_smooth(method = "glm", se = FALSE, color = "red",
+              method.args = list(family = "binomial"))
+data1 %>% 
+  ggplot(aes(x = dti, y = not.fully.paid)) + 
+  geom_jitter(width = 0, height = 0.05, alpha = 0.5) + 
+  geom_smooth(method = "glm", se = FALSE) + 
+  geom_smooth(method = "glm", se = FALSE, color = "red",
+              method.args = list(family = "binomial"))
+```
+## Model specification
+
+```{r echo=FALSE}
+
+spec0 <- not.fully.paid ~ . - pub.rec - log.annual.inc
+spec1 <- not.fully.paid ~ . - pub.rec - log.annual.inc + I(int.rate^2)
+spec2 <- not.fully.paid ~ . +I(int.rate^2)   + log(fico)  
+
+```
+
+## Estimation:
+
+Here we try to build the model using as many parameters as we can to understand which model of two fits the best for yhis task:
+
+```{r}
+library(stargazer)
+glm1 <- glm(spec0, data = train, family = binomial(link = "probit"), x = TRUE)
+glm2 <- glm(spec0, data = train, binomial(link = "logit"),  x = TRUE)
+
+glm3 <- glm(spec1, data = train, binomial(link = "probit"), x = TRUE)
+glm4 <- glm(spec1, data = train, binomial(link = "logit"),  x = TRUE)
+
+glm5 <- glm(spec2, data = train, binomial(link = "probit"), x = TRUE)
+glm6 <- glm(spec2, data = train, binomial(link = "logit"),  x = TRUE)
+
+stargazer(glm1, glm3, glm5,
+          glm2, glm4, glm6, 
+          type = "text")
+```
+
+As we can see there is not big difference between them in p value? so try use marginal effect to describe parameters closer
+
+Let's look at the marginal effects of the models:
+
+```{r}
+library(erer)
+maBina(glm1, x.mean = TRUE)
+```
+
+And visualize them for simplicity:
+
+```{r}
+library(margins)
+me_logit <- glm1 %>% margins_summary()
+me_logit
+me_logit %>% 
+  ggplot() +
+  geom_point(aes(factor, AME)) +
+  geom_errorbar(aes(x = factor, ymin = lower, ymax = upper)) +
+  geom_hline(yintercept = 0, col = "red", linetype = "dashed") +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+## Prediction
+
+```{r}
+pred <- predict(glm2, type = "response", newdata =test)
+pred_churn <- factor(ifelse(pred >= 0.20, "Yes", "No"))
+actual_churn <- factor(ifelse(test$not.fully.paid==1,"Yes","No"))
+table(actual_churn,pred_churn)
+
+# Look at the predictions range
+range(pred)
+```
+
+## Evaluating the logistic regression model result
+
+```{r}
+# Specifying a cut-off
+cutoff_churn <- factor(ifelse(pred >=0.20, "Yes", "No"))
+conf_final <- caret::confusionMatrix(cutoff_churn, actual_churn, positive = "Yes")
+accuracy <- conf_final$overall[1]
+sensitivity <- conf_final$byClass[1]
+specificity <- conf_final$byClass[2]
+conf_final
+```
+And look at the most important variables in the model:
+
+```{r}
+tab<-caret::varImp(glm1)
+tab=tab %>% arrange()
+knitr::kable(tab)
+
+```
+
+If we are going to increase the cut-off specifying,accuracy will increases, sensitivity will decrease and specificity will increases.
+
+But whether this cut of the best one?Let's  perfore the function that will allow us to use the best feature of cut off.
+The function was performed by other user all link can be found at the end.
+
+```{r}
+perform_fn <- function(cutoff) 
+{
+  predicted_churn <- factor(ifelse(pred >= cutoff, "Yes", "No"))
+  conf <- caret::confusionMatrix(predicted_churn, actual_churn, positive = "Yes")
+  accuray <- conf$overall[1]
+  sensitivity <- conf$byClass[1]
+  specificity <- conf$byClass[2]
+  out <- t(as.matrix(c(sensitivity, specificity, accuray))) 
+  colnames(out) <- c("sensitivity", "specificity", "accuracy")
+  return(out)
+}
+
+s = seq(0.01,0.80,length=100)
+OUT = matrix(0,100,3)
+
+for(i in 1:100)
+{
+  OUT[i,] = perform_fn(s[i])
+} 
+ 
+plot(s, OUT[,1],xlab="Cut-off",ylab="Value",cex.lab=1.5,cex.axis=1.5,ylim=c(0,1),
+     type="l",lwd=2,axes=FALSE,col=2)
+axis(1,seq(0,1,length=5),seq(0,1,length=5),cex.lab=1.5)
+axis(2,seq(0,1,length=5),seq(0,1,length=5),cex.lab=1.5)
+lines(s,OUT[,2],col="darkgreen",lwd=2)
+lines(s,OUT[,3],col=4,lwd=2)
+box()
+legend("bottom",col=c(2,"darkgreen",4,"darkred"),text.font =3,inset = 0.02,
+       box.lty=0,cex = 0.8, 
+       lwd=c(2,2,2,2),c("Sensitivity","Specificity","Accuracy"))
+abline(v = 0.159, col="red", lwd=1, lty=2)
+axis(1, at = seq(0.1, 1, by = 0.1))
+```
+
+All three lines are intersect in one point so it could be the brst cut off for our data.
+
+```{r}
+cutoff_churn <- factor(ifelse(pred >=0.159, "Yes", "No"))
+conf_final <- confusionMatrix(cutoff_churn, actual_churn, positive = "Yes")
+accuracy <- conf_final$overall[1]
+sensitivity <- conf_final$byClass[1]
+specificity <- conf_final$byClass[2]
+conf_final
+```
+
+Here we observed the logistic regression in attempt to predict the solvency of the borrower using logit and progit-models.The best model we got with 0.159 will give us the best result in predicting  with AUC =  0.6823.
+
+```{r ROC}
+library(pROC)
+ROCfull = roc(response = test$not.fully.paid, predictor = pred)
+
+plot(ROCfull, legacy.axes=T)
+pROC::auc(ROCfull)
+```
+The same thing for 0.2:
+
+```{r}
+cutoff_churn <- factor(ifelse(pred >=0.2, "Yes", "No"))
+conf_final <- confusionMatrix(cutoff_churn, actual_churn, positive = "Yes")
+accuracy <- conf_final$overall[1]
+sensitivity <- conf_final$byClass[1]
+specificity <- conf_final$byClass[2]
+conf_final
+```
+
+Here we observed the logistic regression in attempt to predict the solvency of the borrower using logit and progit-models.The best model we got with 0.2 will give us the best result in predicting  with AUC =  0.67 and that is lower that we had.
+
+```{r}
+library(pROC)
+ROCfull = roc(response = test$not.fully.paid, predictor = pred)
+
+plot(ROCfull, legacy.axes=T)
+pROC::auc(ROCfull)
+```
+
+## Minuses
+
+Probabilistic logistician models, like other deterministic classifiers, predict the class of each tested object, but at the same time they also return the estimated probability of such belonging. At the same time, it is very useful to analyze the graph of the probability distribution density of both classes, especially when selecting the optimal threshold values of the classifier.
+
+```{r}
+ggplot(data = test) + 
+    geom_density(aes(x = cutoff_churn, color=pred,))
+```
+
+That was the density curves of the a posterior probability of objects belonging to two classes: whether the borrower will return the full amount or not.
+
+## Check our model with a new borrower:
+
+So let's use our model for the new borrower
+
+```{r echo=FALSE}
+new_client = data.frame(credit.policy=1,fico=700,purpose=2,log.annual.inc=10.3,days.with.cr.line=1000,int.rate=0.2,installment=200,dti=0.3,revol.bal=3333,revol.util=70,inq.last.6mths=0,delinq.2yrs=0,pub.rec=0)
+act=predict(glm2, new_client, type="response")
+act
+```
+
+## Mini-coclusion:
+
+Probit and Logit models are harder to interpret but capture the nonlinearities better than the linear approach: both models produce predictions of probabilities that lie inside the interval [0,1]. Predictions of all three models are often close to each other.
+
+## kNN Classification
+
+However linear or as in our case binary regression is not always a good idea for prediction the result of ability for payment the loans.Why?  Cause when you use linear regression you can get only continuous linear, while using knn method will allow you to get the category what seems us closer for solving our task.It doesn't mean that the analyses we did above is useful it helped us to understand and build working algorithm of prediction using logistic regression with accuracy of 0.63%/Not many but enough.Now we will use another method for predicting.
+
+KNN can be used for both classification and regression predictive problems.And if you not welcome with it I can reccomend you this web-site:
+
+[Links  here:](https://www.analyticsvidhya.com/blog/2018/03/introduction-k-neighbours-algorithm-clustering/)
+
+K-Means Clustering: firstly, we should choose the number of clasters to predict.If the number of new groubs will be too low it could lead lead to the effect is not up to model training,while if it is too high there may be difficulties with the performance of the model, as well as an increased risk of retraining.
+
+To ensure all data elements may contribute equal shares to distance we should normalize the dataset.
+
+```{r}
+library(factoextra)
+library(class)
+library(e1071)
+library(caTools)
+library(factoextra)
+library(NbClust)
+loan_data$purpose=as.numeric(loan_data$purpose)
+loans=loan_data %>% mutate_if(is.double,as.numeric)
+
+normalize <- function(x) {
+return ((x - min(x)) / (max(x) - min(x))) }
+
+loans <- as.data.frame(lapply(loans, normalize))
+summary(loans) #all normalized
+set.seed(8887) 
+split1 = initial_split(loans, prop = 0.8)
+train1 = training(split1)
+test1= testing(split1)
+
+wssplot <- function(data, nc=15, seed=1234){
+  wss <- (nrow(data)-1)*sum(apply(data,2,var))
+  for (i in 2:nc){
+    set.seed(seed)
+    wss[i] <- sum(kmeans(data, centers=i)$withinss)}
+  plot(1:nc, wss, type="b", xlab="Number of Clusters",
+       ylab="Within groups sum of squares")}
+
+#Second method
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+set.seed(1234)
+knn_fit <- train(not.fully.paid~., data = train, method = "knn",
+ trControl=trctrl,
+ preProcess = c("center", "scale"),
+ tuneLength = 8)
+plot(knn_fit)
+knn_fit
+```
+We can clearly see that the best number of clusters is 5 using Elbow method let's look at the Accuracy level using the model we have:
+
+```{r}
+loan_target<-train$not.fully.paid
+loan_test<-test$not.fully.paid
+train<-train %>% select(-not.fully.paid)
+test<-test %>% select(-not.fully.paid)
+test=test %>% mutate_if(is.double,as.numeric)
+test=test %>% mutate_if(is.character,as.factor)
+test=test %>% mutate_if(is.factor,as.numeric)
+train=train %>% mutate_if(is.double,as.numeric)
+train=train %>% mutate_if(is.character,as.factor)
+train=train %>% mutate_if(is.factor,as.numeric)
+prc_test_pred <- knn(train = train, test =test,cl =loan_target, k=5)
+##create confusion matrix
+
+confusion_matrix<- table(prc_test_pred,loan_test)
+
+accuracy <- function(x){sum(diag(x)/(sum(rowSums(x)))) * 100}
+accuracy(confusion_matrix)
+```
+## Check our model with a new borrower:
+
+```{r}
+new_client = c(1,2,0.12,800,11.23,14,11,700,5676,4351,50,0,0)
+knn(train = train , test = new_client , cl= loan_target, k=5,prob=TRUE)
+```
+K-nn is a lazy classifier. It doesn't creates a fit to predict later, as in case of other classifiers like logistic regression, tree based algorithms etc. It fits and evaluates at the same time. When you are done with tuning of performance parameters, feed the optimized parameters to knn along with new test cases.
+
+## Naive Bayesian methods
+
+[For more data about this method use](https://uc-r.github.io/naive_bayes)
+
+Naive Bayes is a simple technique for constructing classifiers: models that assign class labels to problem instances, represented as vectors of feature values, where the class labels are drawn from some finite set. 
+
+```{r}
+# Load the naivebayes package
+library(naivebayes)
+# Build the  prediction model
+locmodel <- naive_bayes(as.factor(not.fully.paid)~., data = loan)
+
+locmodel$tables$fico
+locmodel$tables$purpose
+
+```
+Average values were derived for each metric independent variable (first column) and their standard deviations (second column) for each allocated class.
+
+For a visual comparative assessment of the relationship of the measured variables with class labels, it is convenient to consider the nuclear density functions of conditional probability
+
+```{r}
+plot(locmodel, lwd = 6)
+```
+
+Using the data predict payments using Naive Bayesian method:
+
+```{r}
+library(e1071)
+pred <- predict(locmodel, loan[, -13,-14,-12],type="class")
+tt<-(table(Facts = loan$not.fully.paid, Prediction = pred))
+tt
+accuracy(tt)
+```
+## Conclusion:
+
+In this work we were analyzing the loan data and tried to predict whether the borrower will return the loan fully or not.We used interactive visualization, statistical test and linar, logistic regression as well as k-means,k-Nearest Neighbors (kNN) and  Naive Bayesian  methods for predicting.According to the build model clastarization  was the best method for this data.We build the models are available for prediction and may allow us to improve the situation with bank's problems.
+
+Links
+[Function from:](https://app.datacamp.com/workspace/w/ab99b921-87e2-4f50-a592-85c5f29d6174#since-we-are-in-the-business-of-making-money-it-makes-sense-to-give-loans-to-users-who-have-a-high-probability-of-being-able-to-pay-them-back-within-a-short-period-of-time)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
